@@ -1,1 +1,15 @@
 local.settings.json
+.git
+.copilot-azure
+.venv
+**/node_modules
+**/.next
+**/.clerk
+**/.env
+**/.env.*
+**/__pycache__
+**/test-results
+**/playwright-report
+*.ipynb
+.idea
+.DS_Store

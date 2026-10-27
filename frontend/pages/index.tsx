@@ -1,5 +1,6 @@
-import { Card, CardContent, CircularProgress } from "@material-ui/core";
-import { LocationOnOutlined, TodayOutlined } from "@material-ui/icons";
+import { Card, CardContent, CircularProgress } from "@mui/material";
+import { LocationOnOutlined, TodayOutlined } from "@mui/icons-material";
+import { useUser } from "@clerk/nextjs";
 import Head from "next/head";
 import React, { useEffect, useState } from "react";
 import FetchError from "../components/FetchError";
@@ -9,6 +10,7 @@ import { API_URL, DEFAULT_ERR_MESSAGE } from "../utils/constants";
 
 /** Home Page */
 const Index = () => {
+  const { isLoaded, isSignedIn, user } = useUser();
   const [fetching, setFetching] = useState(false);
   const [fetchingR, setFetchingR] = useState(false);
   const [fetchErr, setFetchErr] = useState({
@@ -38,9 +40,15 @@ const Index = () => {
       )
       .finally(() => setFetching(false));
 
-    // Fetch Recommended events
+  }, []);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) {
+      setRevents([]);
+      return;
+    }
     setFetchingR(true);
-    fetch(`${API_URL}/recommended/12345`, {
+    fetch(`${API_URL}/recommended`, {
       mode: "cors",
       method: "GET",
     })
@@ -55,7 +63,7 @@ const Index = () => {
         setFetchErr({ error: true, message: DEFAULT_ERR_MESSAGE })
       )
       .finally(() => setFetchingR(false));
-  }, []);
+  }, [isLoaded, isSignedIn, user?.id]);
 
   const upcomingEvents = [...events].splice(0, 4);
   const popularEvents = [...rEvents].splice(0, 4);
@@ -77,6 +85,7 @@ const Index = () => {
           <div className="bg-gray-100">
             <div className="container mx-auto pt-4 pb-6">
               <h6 className="text-lg mb-2">Upcoming Events</h6>
+              {events.length === 0 && <p>No events found yet. Discovery is in progress.</p>}
               <div className="grid grid-cols-4 gap-3">
                 {upcomingEvents.map((event) => (
                   <Card key={event.url}>
@@ -105,6 +114,7 @@ const Index = () => {
 
           <div className="container mx-auto py-4">
             <h6 className="text-lg mb-2">Recommended Events</h6>
+            {isLoaded && !isSignedIn && <p>Sign in to see recommended events.</p>}
             <div className="grid grid-cols-4 gap-3">
               {rEvents.map((event, idx) => (
                 <a

@@ -1,5 +1,4 @@
-import { Button } from "@material-ui/core";
-import { Alert } from "@material-ui/lab";
+import { Alert, Button } from "@mui/material";
 import { useRouter } from "next/router";
 import React from "react";
 import { DEFAULT_ERR_MESSAGE } from "../utils/constants";

@@ -8,7 +8,7 @@ from shared.messengers.messenger import MessengerSetting
 
 @dataclass
 class WebScrapperResponse():
-    status_details = str = ""
+    status_details: str = ""
     status_code: int = -1
     result: str = None
 
@@ -41,7 +41,7 @@ class BaseExtractor():
         self.site_url = args.site_url
         self.messenger = args.messenger
         self.messenger_setting = args.messenger_setting
-        self.events = args.events
+        self.events = args.events if args.events is not None else []
         self.response = args.response
 
     def run(self):

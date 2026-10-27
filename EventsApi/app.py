@@ -2,7 +2,6 @@ import os
 
 from flask import Flask, jsonify
 from flask.views import MethodView
-from flask_cors import CORS
 import requests
 
 from shared.persistors.cosmos_client import DundaaCosmosClient
@@ -10,7 +9,6 @@ from shared.persistors.persistor import PersistorSetting
 from shared.services import events_api_setting as service_setting
 
 app = Flask(__name__)
-CORS(app)
 
 cosmos_client = DundaaCosmosClient(
     cosmos_endpoint=os.environ.get("COSMOS_ACCOUNT_URI"),
@@ -33,9 +31,10 @@ class EventsAPI(MethodView):
         if len(events) == 0:
             app.logger.info("Could not find events. scheduling scrapper run")
             requests.post(
-                "http://localhost:5000/api/scrap",
-                data={}
-            )
+                f"{os.environ['DISCOVERY_API_URL'].rstrip('/')}/api/scrap",
+                json={},
+                timeout=15,
+            ).raise_for_status()
 
         return jsonify({
             "events": events
@@ -45,12 +44,7 @@ class EventsAPI(MethodView):
 class RecommendedEventsApi(MethodView):
 
     def get(self, user_id):
-        try:
-            events = cosmos_client.query(
-                persistor_setting
-            )
-        except Exception as exc:
-            events = []
+        events = cosmos_client.query(persistor_setting)
         return jsonify({
             "events": events
         })
@@ -60,6 +54,10 @@ app.add_url_rule(
     '/events/',
     view_func=EventsAPI.as_view('events')
 )
+
+@app.get("/health")
+def health():
+    return jsonify(status="ok")
 
 app.add_url_rule(
     '/events/recommended/<string:user_id>',

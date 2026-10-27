@@ -1,98 +1,58 @@
 import json
 import logging
 import os
-import sys
 
-from flask import Flask
-from flask import jsonify, request, abort
-from flask_cors import CORS
+from flask import Flask, jsonify, request
 
 from shared.contracts.Messages import EventBlobCreated, ScrapSite
-from shared.messengers.amqp_sdk import DundaaAMQPSDK, MessengerSetting
+from shared.messengers.messenger import MessengerSetting
+from shared.messengers.queue_sdk import DundaaQueueSDK
 from shared.services import event_discovery_setting
 
-SCRAPPER_DELAY = 100
-
-logging.basicConfig(
-    format="%(asctime)s %(levelname)s:%(name)s: %(message)s",
-    level=logging.INFO,
-    datefmt="%H:%M:%S",
-    stream=sys.stderr,
-)
-
+logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
-CORS(app)
+messenger = DundaaQueueSDK()
 
 
-amqp_messenger = DundaaAMQPSDK(
-    amqp_host=os.environ.get("AMQP_HOST"),
-    amqp_url=os.environ.get("AMQP_URL")
-)
+@app.get("/health")
+def health():
+    return jsonify(status="ok")
 
-@app.route('/api/scrap', methods=["POST"])
+
+@app.post("/api/scrap")
 def discover_events():
-    app.logger.info("request headers %s" % request.headers)
-    req_data = request.data.decode()
-
-    # scheduled scrapper
-    app.logger.info("Scheduling web scrapper")
-    scheduled_scrap = ScrapSite(
-        delay=30
+    delay = int(os.environ.get("SCRAPER_DELAY_SECONDS", "0"))
+    messenger.send_message(
+        data=ScrapSite(delay=delay).to_json(),
+        messenger_setting=MessengerSetting(
+            service_name=event_discovery_setting.delayed_exchange,
+            key=event_discovery_setting.key,
+        ),
+        delay=delay,
     )
+    return jsonify(message="Accepted"), 202
 
-    delayed_messenger_setting = MessengerSetting(
-        service_name=event_discovery_setting.delayed_exchange,
-        key=event_discovery_setting.key
-    )
-    amqp_messenger.send_message(
-        data=scheduled_scrap.to_json(),
-        messenger_setting=delayed_messenger_setting,
-        delay=SCRAPPER_DELAY
-    )
 
-    return jsonify({
-        "message": "Accepted"
-    })
-
-@app.route('/api/NewEvents', methods=["GET", "POST"])
+@app.post("/api/NewEvents")
 def new_events():
-    app.logger.info("request headers %s" % request.headers)
-    req_data = request.data.decode()
-
-    req_json = json.loads(req_data)
+    payload = request.get_json()
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+        app.logger.warning("Invalid blob event request")
+        return jsonify(error="A blob event data object is required"), 400
+    data = {key: value for key, value in payload["data"].items() if key != "storageDiagnostics"}
     try:
-        _data = req_json["data"]
-        del _data["storageDiagnostics"]
-        blob_created_message = EventBlobCreated(**_data)
-    except Exception as exc:
-        app.logger.error(str(exc))
-        abort(400)
-
-    app.logger.info("Sending message %s" % blob_created_message)
-    messenger_setting = MessengerSetting(
-        service_name=event_discovery_setting.name,
-        key=event_discovery_setting.key
+        message = EventBlobCreated(**data)
+    except TypeError:
+        app.logger.warning("Invalid blob event fields")
+        return jsonify(error="Invalid blob event fields"), 400
+    messenger.send_message(
+        data=message.to_json(),
+        messenger_setting=MessengerSetting(
+            service_name=event_discovery_setting.name,
+            key=event_discovery_setting.key,
+        ),
     )
-    amqp_messenger.send_message(data=blob_created_message.to_json(), messenger_setting=messenger_setting)
-
-    # scheduled scrapper
-    app.logger.info("Scheduling web scrapper")
-    scheduled_scrap = ScrapSite(
-        delay=SCRAPPER_DELAY
-    )
-    delayed_messenger_setting = MessengerSetting(
-        service_name=event_discovery_setting.delayed_exchange,
-        key=event_discovery_setting.key
-    )
-    amqp_messenger.send_message(
-        data=scheduled_scrap.to_json(),
-        messenger_setting=delayed_messenger_setting,
-        delay=SCRAPPER_DELAY
-    )
-
-    return jsonify({
-        "message": "Accepted"
-    })
+    return jsonify(message="Accepted"), 202
 
 
 if __name__ == "__main__":

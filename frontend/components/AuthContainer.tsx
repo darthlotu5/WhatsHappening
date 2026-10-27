@@ -1,7 +1,7 @@
 import React from "react";
 
 /** Auth container */
-const AuthContainer: React.FC<{ pageTitle: string }> = ({
+const AuthContainer: React.FC<React.PropsWithChildren<{ pageTitle: string }>> = ({
   pageTitle,
   children,
 }) => {

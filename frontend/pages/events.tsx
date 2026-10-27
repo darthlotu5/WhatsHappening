@@ -4,8 +4,8 @@ import {
   CardContent,
   CircularProgress,
   TextField,
-} from "@material-ui/core";
-import { LocationOnOutlined, TodayOutlined } from "@material-ui/icons";
+} from "@mui/material";
+import { LocationOnOutlined, TodayOutlined } from "@mui/icons-material";
 import Head from "next/head";
 import React, { useEffect, useState } from "react";
 import FetchError from "../components/FetchError";

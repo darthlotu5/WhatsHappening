@@ -2,8 +2,8 @@ import datetime
 import json
 import time
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
-from shared.contracts import events_pb2
 
 @dataclass
 class Event:
@@ -40,8 +40,9 @@ class Event:
             return self._json()
 
     def _proto(self):
-        start_datetime = datetime.datetime.combine(self.start_date, self.start_time).timestamp()
-        end_datetime = datetime.datetime.combine(self.end_date, self.end_time).timestamp()
+        from shared.contracts import events_pb2
+        start_datetime = datetime.datetime.combine(self.start_date, self.start_time, ZoneInfo("Africa/Nairobi")).timestamp()
+        end_datetime = datetime.datetime.combine(self.end_date, self.end_time, ZoneInfo("Africa/Nairobi")).timestamp()
 
         return events_pb2.Event(
             name=self.name,
@@ -54,8 +55,8 @@ class Event:
         )
 
     def _json(self):
-        start_datetime = datetime.datetime.combine(self.start_date, self.start_time).timestamp()
-        end_datetime = datetime.datetime.combine(self.end_date, self.end_time).timestamp()
+        start_datetime = datetime.datetime.combine(self.start_date, self.start_time, ZoneInfo("Africa/Nairobi")).timestamp()
+        end_datetime = datetime.datetime.combine(self.end_date, self.end_time, ZoneInfo("Africa/Nairobi")).timestamp()
 
         return json.dumps(
             {

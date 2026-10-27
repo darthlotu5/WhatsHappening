@@ -1,0 +1,14 @@
+FROM python:3.13-slim
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+COPY requirements.lock.txt ./
+RUN pip install --no-cache-dir -r requirements.lock.txt
+COPY EventsApi ./EventsApi
+COPY EventDiscoveryApi ./EventDiscoveryApi
+COPY EventsProcessor ./EventsProcessor
+COPY EventScrapper ./EventScrapper
+COPY shared ./shared
+RUN useradd --create-home --uid 10001 appuser
+USER appuser
+EXPOSE 8000
+CMD ["python", "-m", "gunicorn", "--bind", "0.0.0.0:8000", "--timeout", "120", "EventsApi.app:app"]

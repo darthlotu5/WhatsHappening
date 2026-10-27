@@ -1,10 +1,12 @@
 import asyncio
+import json
 import re
+from urllib.parse import urljoin
 from datetime import datetime as dt
 
 import bs4
 import requests as req
-from aiohttp import ClientSession
+from aiohttp import ClientSession, ClientTimeout, TCPConnector
 from bs4 import BeautifulSoup
 from EventScrapper import SUCCESS
 from EventScrapper.base_extractor import BaseExtractor
@@ -14,11 +16,7 @@ from EventScrapper.utils import build_request_response
 class ScrapTicketSasa(BaseExtractor):
     def run(self):
         try:
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(self._load_page_parse_events())
-            # wait for all sessions to close
-            loop.run_until_complete(asyncio.sleep(0.250))
-            loop.close()
+            asyncio.run(self._load_page_parse_events())
             self.response = build_request_response(SUCCESS, "requests successful")
 
         except Exception as exc:
@@ -34,14 +32,15 @@ class ScrapTicketSasa(BaseExtractor):
         return html_doc
 
     @staticmethod
-    def _parse_time(time_str: str, _format="%I:%S %p") -> dt.time:
-        return dt.strptime(time_str, _format).time()
+    def _parse_time(time_str: str, _format="%I:%M %p") -> dt.time:
+        return dt.strptime(time_str.strip(), _format).time()
 
     @staticmethod
     def _parse_end_date(date_tag: bs4.element.Tag, _format="%A%d%B%Y") -> dt.date:
         date_string = list(date_tag.find("li").strings)[-1]
         # remove all white spaces or unneccessary strings from date
-        date_string = re.sub(r"\s+|,|:|st|nd|rd|th", "", date_string)
+        date_string = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", date_string)
+        date_string = re.sub(r"\s+|,|:", "", date_string)
         try:
             return dt.strptime(date_string, _format).date()
         except Exception:
@@ -102,21 +101,31 @@ class ScrapTicketSasa(BaseExtractor):
 
         base_url = self.site_url
         url = base_url + "/events"
-        html_doc = req.get(url).content
+        response = req.get(url, timeout=30, headers={"User-Agent": "Dundaa/1.0 event-discovery"})
+        response.raise_for_status()
+        html_doc = response.content
 
         soup = BeautifulSoup(html_doc, "html.parser")
+        payload = soup.find("script", id="__NUXT_DATA__")
+        if payload:
+            self.events.extend(self._parse_modern_events(payload.get_text()))
+            return
 
         events_html = soup.select('div[itemtype="http://schema.org/Event"]')
 
         tasks = []
-        async with ClientSession() as session:
+        async with ClientSession(
+            timeout=ClientTimeout(total=30),
+            connector=TCPConnector(limit=5),
+            headers={"User-Agent": "Dundaa/1.0 event-discovery"},
+        ) as session:
             for event_html in events_html:
                 # print(each)
                 event_banner_tag = event_html.find("img")
-                event_banner = event_banner_tag["src"]
+                event_banner = urljoin(base_url, event_banner_tag["src"])
                 event_dt = event_html.select_one(".date-box")
                 event_endpoint = event_dt.get("href")
-                url = base_url + event_endpoint
+                url = urljoin(base_url, event_endpoint)
 
                 tasks.append(
                     self._parse_event(
@@ -125,3 +134,33 @@ class ScrapTicketSasa(BaseExtractor):
                 )
 
             await asyncio.gather(*tasks)
+
+    def _parse_modern_events(self, payload):
+        values = json.loads(payload)
+        if not isinstance(values, list):
+            raise ValueError("Unexpected TicketSasa Nuxt payload")
+        events = {}
+        required = {"id", "name", "loc", "slug_name", "main_image", "start_at"}
+        for item in values:
+            if not isinstance(item, dict) or not required.issubset(item):
+                continue
+            record = {}
+            for field in required:
+                reference = item[field]
+                if type(reference) is not int or not 0 <= reference < len(values):
+                    raise ValueError(f"Invalid TicketSasa field reference: {field}")
+                record[field] = values[reference]
+            started = dt.strptime(record["start_at"], "%a %d %b %Y %I:%M %p")
+            event = Event(
+                name=record["name"], location=record["loc"],
+                start_date=started.date(), end_date=started.date(),
+                start_time=started.time(), end_time=started.time(),
+                banner_url=urljoin(self.site_url, record["main_image"]),
+                site_name=self.site_name,
+                url=urljoin(self.site_url, f"/events/{record['slug_name']}"),
+                id=f"ticketsasa-{record['id']}",
+            )
+            events[event.id] = event
+        if not events:
+            raise ValueError("TicketSasa payload contained no recognizable event records")
+        return list(events.values())

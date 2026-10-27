@@ -1,8 +1,8 @@
 amqpq:
-  host: "shrimp.rmq.cloudamqp.com"
-  password: "P__TkhouA0w9w2-GBbQcgBpw0Wg3sVav"
-  username: "qprfemrn"
-  vhost: "qprfemrn"
+  host: "${AMQP_HOST}"
+  password: "${AMQP_PASSWORD}"
+  username: "${AMQP_USERNAME}"
+  vhost: "${AMQP_VHOST}"
   dialect: "amqp"
   port: "8883"
   event_scrapped_exchange: "dundaa.events"

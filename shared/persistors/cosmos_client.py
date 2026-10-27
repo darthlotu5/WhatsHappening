@@ -1,4 +1,5 @@
 from azure.cosmos import CosmosClient, PartitionKey
+from azure.identity import DefaultAzureCredential
 import json
 
 from shared.persistors.persistor import PersistorSetting, Persistor
@@ -6,7 +7,12 @@ from shared.persistors.persistor import PersistorSetting, Persistor
 
 class DundaaCosmosClient(Persistor):
     def __init__(self, cosmos_endpoint, primary_key):
-        self.client = CosmosClient(url=cosmos_endpoint, credential=primary_key)
+        if not cosmos_endpoint:
+            raise ValueError("COSMOS_ACCOUNT_URI is required")
+        self.client = CosmosClient(
+            url=cosmos_endpoint,
+            credential=primary_key or DefaultAzureCredential(),
+        )
         self.database = None
 
 
@@ -19,11 +25,7 @@ class DundaaCosmosClient(Persistor):
     def __get_container(self, container_id, database_id: str, partionKeyPath):
         database = self.__get_db(database_id)
 
-        return database.create_container_if_not_exists(
-                id=container_id,
-                partition_key=PartitionKey(path=partionKeyPath),
-                offer_throughput=400
-            )
+        return database.get_container_client(container_id)
 
     def __read(self, db, container_id: str, object_id: str):
         raise NotImplementedError

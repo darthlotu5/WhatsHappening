@@ -1,0 +1,16 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": { "value": "whatshap-dev-04ce" },
+    "location": { "value": "southafricanorth" },
+    "sessionId": { "value": "04ce3e65-f269-49d4-8a98-098f84c03b6c" },
+    "deployedBy": { "value": "Pius Dan Nyongesa" },
+    "createdAt": { "value": "2026-10-27T13:12:12Z" },
+    "deployerObjectId": { "value": "4d73fbf0-5ef3-4844-b848-aa25c793fa6a" },
+    "deployApps": { "value": false },
+    "backendImage": { "value": "" },
+    "frontendImage": { "value": "" },
+    "nextPublicClerkPublishableKey": { "value": "" }
+  }
+}

@@ -1,70 +1,54 @@
-import os
-import uuid
 import json
 import logging
+import uuid
 
 from azure.core.exceptions import ResourceExistsError
-from azure.storage.blob import BlobServiceClient
-from shared.messengers.messenger import Messenger, BlobMessengerSetting
+
+from shared.azure_clients import blob_service
+from shared.contracts.Messages import EventBlobCreated
+from shared.messengers.messenger import BlobMessengerSetting, Messenger, MessengerSetting
+from shared.messengers.queue_sdk import DundaaQueueSDK
+from shared.services import event_discovery_setting
+
 
 class DundaaBlobClient(Messenger):
-    def __init__(self, connection_string: str,logger=None):
-        if logger is None:
-            logger = logging.getLogger(__name__)
-
-        self.logger = logger
-        self.blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-
-
-
-    def get_container_client(self, container_name: str):
-        return self.blob_service_client.create_container(container_name)
-
-    def __create_container(self, container_name: str):
-        try:
-            new_container = self.blob_service_client.create_container(container_name)
-            properties = new_container.get_container_properties()
-        except ResourceExistsError:
-            self.logger.info("Container already exists.")
+    def __init__(self, connection_string=None, logger=None):
+        self.logger = logger or logging.getLogger(__name__)
+        if connection_string:
+            from azure.storage.blob import BlobServiceClient
+            self.blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        else:
+            self.blob_service_client = blob_service()
 
     def read(self, container_name, blob_path):
-        _blob_client = self.blob_service_client.get_blob_client(container_name, blob_path, snapshot=None)
-        data = _blob_client.download_blob().readall()
-        data = json.loads(data)
-        return data
+        blob = self.blob_service_client.get_blob_client(container_name, blob_path)
+        return json.loads(blob.download_blob().readall())
 
-
-    def write(self, data: iter, container_name: str, folder=None):
-        # Create a local directory to hold blob data
-        local_path = "/tmp/.data"
+    def write(self, data, container_name, folder=None):
         try:
-            os.mkdir(local_path)
-        except FileExistsError as exc:
+            self.blob_service_client.create_container(container_name)
+        except ResourceExistsError:
             pass
+        filename = f"{uuid.uuid4()}.json"
+        path = f"{folder}/{filename}" if folder else filename
+        blob = self.blob_service_client.get_blob_client(container_name, path)
+        body = json.dumps(data)
+        result = blob.upload_blob(body, overwrite=False)
+        message = EventBlobCreated(
+            api="PutBlob", clientRequestId=str(uuid.uuid4()), requestId=str(uuid.uuid4()),
+            eTag=str(result["etag"]), contentType="application/json",
+            contentLength=len(body.encode("utf-8")), blobType="BlockBlob",
+            url=blob.url, sequencer="",
+        )
+        DundaaQueueSDK().send_message(
+            data=message.to_json(),
+            messenger_setting=MessengerSetting(
+                service_name=event_discovery_setting.name,
+                key=event_discovery_setting.key,
+            ),
+        )
+        self.logger.info("Uploaded %d events and queued processing for %s", len(data), path)
+        return blob.url
 
-        # Create a file in the local data directory to upload and download
-        local_file_name = str(uuid.uuid4()) + ".json"
-        upload_file_path = os.path.join(local_path, local_file_name)
-
-        # Write text to the file
-        with open(upload_file_path, 'w') as outfile:
-            json.dump(data, outfile)
-
-        # Create a blob client using the local file name as the name for the blob
-        self.logger.info("attempting to create container %s" % container_name)
-        self.__create_container(container_name)
-        if folder is None:
-            blob_file_name = local_file_name
-        else:
-            blob_file_name = "%s/%s" % (folder, local_file_name)
-        blob_client = self.blob_service_client.get_blob_client(container=container_name, blob=blob_file_name)
-
-        self.logger.info("\nUploading to Azure Storage as blob:\n\t" + local_file_name)
-
-        # Upload the created file
-        with open(upload_file_path, "rb") as data:
-            blob_client.upload_blob(data)
-
-
-    def send_message(self, messenger_setting: BlobMessengerSetting, data: iter):
-        self.write(container_name=messenger_setting.container_name, folder=messenger_setting.key ,data=data)
+    def send_message(self, messenger_setting: BlobMessengerSetting, data):
+        return self.write(data, messenger_setting.container_name, messenger_setting.key)

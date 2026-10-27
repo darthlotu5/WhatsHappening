@@ -8,10 +8,11 @@ export default async function events(req: NextApiRequest, res: NextApiResponse) 
     return res.status(405).json({ error: "Method not allowed" });
   }
   const path = req.query.path ?? [];
-  if (!Array.isArray(path) || path.length > 1 || (path.length === 1 && path[0] !== "recommended")) {
+  if (!Array.isArray(path) || path.length > 1 || (path.length === 1 && !["recommended", "sources"].includes(path[0]))) {
     return res.status(404).json({ error: "Not found" });
   }
   let endpoint = "/events/";
+  if (path[0] === "sources") endpoint = "/sources";
   if (path[0] === "recommended") {
     const { userId } = getAuth(req);
     if (!userId) return res.status(401).json({ error: "Sign in to view recommended events" });
@@ -29,7 +30,13 @@ export default async function events(req: NextApiRequest, res: NextApiResponse) 
     });
     if (!response.ok) throw new Error(`Events service returned HTTP ${response.status}`);
     const data: unknown = await response.json();
-    if (typeof data !== "object" || data === null || !("events" in data) || !Array.isArray(data.events)) {
+    if (typeof data !== "object" || data === null) {
+      throw new Error("Events service returned an invalid response");
+    }
+    const records = path[0] === "sources"
+      ? ("sources" in data ? data.sources : undefined)
+      : ("events" in data ? data.events : undefined);
+    if (!Array.isArray(records)) {
       throw new Error("Events service returned an invalid response");
     }
     return res.status(200).json(data);

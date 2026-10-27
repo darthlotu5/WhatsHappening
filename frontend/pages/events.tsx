@@ -12,6 +12,7 @@ import FetchError from "../components/FetchError";
 import TopAppbar from "../components/TopAppbar";
 import { EventDetails } from "../types/event";
 import { API_URL, DEFAULT_ERR_MESSAGE } from "../utils/constants";
+import { eventDate } from "../utils/eventDate";
 
 /** Events Page */
 const Events = () => {
@@ -97,7 +98,8 @@ const Events = () => {
               >
                 <Card>
                   <img
-                    src={event.banner_url}
+                    src={event.banner_url || undefined}
+                    loading="lazy"
                     alt=""
                     className="object-cover h-64 w-full "
                   />
@@ -108,13 +110,13 @@ const Events = () => {
                       <div className="flex gap-1 items-center text-gray-700">
                         <TodayOutlined />
                         <p className="text-sm">
-                          {new Date(event.start_date * 1000).toDateString()}
+                          {eventDate(event.start_date, event.date_label)}
                         </p>
                       </div>
 
                       <div className="flex gap-1 items-center text-gray-600">
                         <LocationOnOutlined />
-                        <p className="text-sm">{event.location}</p>
+                        <p className="text-sm">{event.location || "Location not provided"}</p>
                       </div>
                     </div>
                   </CardContent>

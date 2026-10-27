@@ -1,9 +1,8 @@
 import logging
-import os
-
-from EventScrapper import SUCCESS
-from EventScrapper.base_extractor import WebScrapperArgs
-from EventScrapper.ticket_sasa import ScrapTicketSasa
+from EventDiscoveryApi.schedule import schedule_sources
+from EventScrapper.engine import scrape_source
+from EventScrapper.sources import SOURCE_BY_ID
+from EventScrapper.state import BlobStateStore
 from shared.contracts.Messages import ScrapSite
 from shared.messengers.azure_blob import DundaaBlobClient
 from shared.messengers.messenger import BlobMessengerSetting, MessageConsumerSetting
@@ -11,29 +10,28 @@ from shared.messengers.queue_sdk import DundaaQueueSDK
 from shared.services import web_scrapper_setting
 
 logging.basicConfig(level=logging.INFO)
-logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
 def run(ch, method, properties, body):
     message = ScrapSite.from_json(body.decode())
-    logger.info("Starting scheduled scrape %s", message.id)
-    extractor = ScrapTicketSasa(args=WebScrapperArgs(
+    if message.source is None:
+        schedule_sources(DundaaQueueSDK())
+        return
+    source = SOURCE_BY_ID[message.source]
+    logger.info("Starting scheduled scrape %s for %s", message.id, source.id)
+    from EventScrapper.providers import get_adapter
+    scrape_source(source, BlobStateStore(), get_adapter(source.id), publish_changed)
+
+
+def publish_changed(source, events):
+    DundaaBlobClient(logger=logger).send_message(
         messenger_setting=BlobMessengerSetting(
-            key=web_scrapper_setting.key, service_name=web_scrapper_setting.name,
+            key=source.id, service_name=web_scrapper_setting.name,
         ),
-        messenger=DundaaBlobClient(logger=logger),
-        success_status_codes=[SUCCESS], site_name="ticketsasa",
-        site_url=os.environ.get("TICKETSASA_URL", "https://ticketsasa.com"),
-    ))
-    extractor.run()
-    extractor.get_result()
-    extractor.log_response()
-    if extractor.response.result != "SUCCESS":
-        raise RuntimeError(extractor.response.status_details)
-    if not extractor.events:
-        raise RuntimeError("TicketSasa returned no recognizable events; upstream markup may have changed")
-    extractor.send_messages()
+        data=events,
+    )
 
 
 if __name__ == "__main__":

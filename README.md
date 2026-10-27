@@ -9,8 +9,8 @@ Discover events across Kenya, hosted on Azure with Clerk authentication.
 - Next.js / React frontend with Clerk sign-in and signup; public event browsing.
 - Flask events and discovery APIs, with Gunicorn in deployed containers.
 - Scraper -> Azure Blob Storage -> Azure Storage Queue -> processor -> Cosmos DB.
-- A scheduled task requests fresh scraping; queued work is retried and acknowledged
-  only after success. After five failed deliveries, messages go to a `-poison`
+- A scheduled task fans out one independent scrape message per registered source;
+  transient failures are retried. After five failed deliveries, messages go to a `-poison`
   queue and an error is logged.
 
 RabbitMQ is no longer used by the deployed runtime. Firebase accounts and passwords
@@ -67,10 +67,115 @@ npm run build
 E2E_BASE_URL=https://your-deployed-host npm run test:e2e
 ```
 
-The scraper relies on external TicketSasa markup and availability. Upstream
-failures are logged and retried, not replaced with fabricated events.
+Source adapters rely on external markup, public interfaces, and availability.
+Upstream failures are logged and retried, not replaced with fabricated events.
 The historical RabbitMQ credential must be revoked/rotated at the provider;
 removing it from current source does not erase Git history.
+
+## Multi-source discovery and information gain
+
+`EventScrapper/sources.py` registers the 19 unique directory entries (the repeated
+Urban Gang entry is configured once). Every scheduled run queues a separate
+message per source. A source outage does not prevent other sources from running.
+Only public event facts are extracted; organizer descriptions, customer data,
+login-protected content, and private APIs are not copied.
+
+The worker's **durable Blob-backed state** survives scale-to-zero and deployments.
+Each source tracks stable event IDs and SHA-256 fingerprints of normalized event
+facts. Only new or changed records are published to ingestion; identical scans
+produce no event blobs, processing messages, or Cosmos upserts. Fingerprints
+advance only after publication succeeds. Queue delivery remains at-least-once;
+retry-after-failure can repeat a delivery, and Cosmos IDs make those writes
+idempotent. State updates use Blob ETags to reject concurrent lost updates.
+
+HTTP requests use conditional `ETag`/`Last-Modified` validation. Detail pages use
+adaptive 6-24-hour cache windows, capped by provider cache directives; listing pages are revalidated on every run.
+This intentionally bounds how quickly detail-only changes can be observed.
+`no-store`/`no-cache` responses retain their HTTP cache semantics. Old HTTP cache
+entries expire after 30 days. The report's `information_gain` is the fraction of
+observed events whose normalized content changed, not an estimate of unseen data.
+
+Adapters validate observed pagination totals/termination, follow published
+sitemaps where appropriate, and check full SSR catalog coverage. They respect
+robots rules (including longest-path precedence), crawl delays, HTTPS host
+allowlists, and per-host throttling. Denied access, rate limits, DNS failures,
+parser changes, and truncated coverage are explicit source outcomes, not empty
+successful results. Request/byte safety limits report incomplete coverage rather
+than silently treating a capped first page as the full catalog. Some providers
+cannot expose a complete catalog to an unauthenticated, policy-respecting crawler;
+registration does **not** mean every source is fully accessible.
+
+Inspect current source outcomes and information-gain metrics:
+
+```sh
+curl -fsS https://ca-web-whatshap-dev-04ce.yellowflower-e7938034.southafricanorth.azurecontainerapps.io/api/events/sources
+```
+
+Audit live public pages locally without publishing to the production catalog:
+
+```sh
+.venv/bin/python -m EventScrapper.audit \
+  --state-dir .copilot-azure/source-audit --workers 3
+# Repeat against the same directory to measure changed records and cache reuse.
+# Restrict a run with --source ticketsasa --source nyotecreation.
+```
+
+The audit returns nonzero if any source is blocked, unavailable, or incomplete,
+while printing every source outcome. Explicitly unannounced event dates display
+as such; dates with a missing year preserve the publisher's date label and are
+marked unconfirmed instead of guessing a year. Raw source records retain their
+provenance. The catalog merges verified canonical URLs or exact normalized
+name/venue/start-time matches across publishers while retaining source links;
+undated entries are not merged merely because their names match.
+
+The private discovery API also accepts `POST /api/scrap` with
+`{"source":"ticketsasa"}` to queue just one source, or `{}` for all sources.
+Incomplete/failed sources remain visible at `/api/events/sources` and in worker
+logs. Transient errors use the existing retry/poison-queue policy; explicitly
+robots/access-blocked sources are recorded and acknowledged without repeatedly
+hammering a denied endpoint.
+Known partial catalogs are also acknowledged with an explicit incomplete report;
+they are revisited on the next schedule, not immediately recrawled five times.
+Missing optional venues/end times are retained as unknown, not invented.
+
+### Verified public-source coverage
+
+These are observed public-page counts from 27 October 2026, not permanent
+inventory totals. “Partial” means useful records are ingested but full platform
+coverage is **not** verified. Current production counts and specific failures are
+available from `/api/events/sources`.
+
+The deployed scan produced **1,229 deduplicated catalog entries from 14
+data-producing providers**. All 19 sources were attempted. A repeat NyoteCreation
+scan after deploying a new worker revision reused all five cached details and
+published zero updates, proving incremental state survives deployment.
+
+| Source | Observed acquisition and coverage |
+| --- | --- |
+| Ticketsasa | 28 full SSR records; checked against the reported upcoming total |
+| Mookh | 135 parseable records from 142 sitemap candidates; partial, with stale/detail failures and a robots-disallowed listing API |
+| HustleSasa | 154 production events from 155 sitemap candidates after normalizing unpadded published clocks; one stale URL, with full marketplace API coverage unverified |
+| M-Tickets | 55 sitemap events; partial platform scope and potentially expiring signed images |
+| Tikiti | 330 events across all 14 published listing pages and detail pages |
+| TipsiTickets | 73 distinct events across both exhausted current/past feeds |
+| PataTicket | 3 current events; 14 historical cards need a robots-disallowed resolver |
+| Tickets Kenya | 140 distinct events across all 11 listing pages |
+| NyoteCreation | 5 events across the public listing/details |
+| Rada | Explicitly empty public EventsExplorer catalog; articles are not events |
+| NOW Kenya | Domain DNS unavailable during the audit |
+| Urban Gang Tour | 11 full server-registry records, verified against the sitemap, including explicit TBA events |
+| KenyaBuzz | 58 parent events expanded to 129 dated occurrences; landing and numbered lists are unioned |
+| Visit Nairobi | Live feed is robots-disallowed; the stale KenyaBuzz snapshot is not republished as fresh data |
+| Eventbrite Kenya | 110 records across 6 pages verified locally, with changing totals; the deployed Azure fetch currently returns HTTP 405, so these are not represented as a successful production scrape |
+| Rada Nightlife | Empty DJ-event subset only; editorial articles are not ingested as events |
+| TIKET | 4 active public records; anonymous API count/pagination verified |
+| OnePass Africa | 112 distinct Kenya cards across 5 pages; published dates lack years and remain explicitly unconfirmed |
+| AllEvents Nairobi | 58 parsed detail events from 64 observed links; partial because further API pagination is unavailable |
+
+Occurrences sharing an event page but having different start times remain
+separate. Repeating the audit preserved unchanged fingerprints, including all
+135 Mookh, 140 Tickets Kenya, 129 KenyaBuzz, 112 OnePass, and 73 Tipsi records;
+only newly discovered/changed event facts enter the ingestion pipeline.
 
 ## Azure deployment
 
@@ -124,6 +229,12 @@ BACKEND_DIGEST=$(az acr repository show --subscription "$AZURE_SUBSCRIPTION_ID" 
   -n crwhatshapdev04ce --image "backend:$RELEASE" --query digest -o tsv)
 FRONTEND_DIGEST=$(az acr repository show --subscription "$AZURE_SUBSCRIPTION_ID" \
   -n crwhatshapdev04ce --image "frontend:$RELEASE" --query digest -o tsv)
+az deployment sub what-if --subscription "$AZURE_SUBSCRIPTION_ID" \
+  --location southafricanorth --template-file infra/main.bicep \
+  --parameters @infra/main.parameters.json deployApps=true \
+  "backendImage=crwhatshapdev04ce.azurecr.io/backend@$BACKEND_DIGEST" \
+  "frontendImage=crwhatshapdev04ce.azurecr.io/frontend@$FRONTEND_DIGEST" \
+  "nextPublicClerkPublishableKey=$CLERK_PUBLIC_KEY"
 az deployment sub create --subscription "$AZURE_SUBSCRIPTION_ID" \
   --name whatshap-apps-04ce --location southafricanorth \
   --template-file infra/main.bicep --parameters @infra/main.parameters.json \

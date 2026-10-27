@@ -112,6 +112,17 @@ class ScraperTests(unittest.TestCase):
 
 
 class ProcessorTests(unittest.TestCase):
+    def test_expanded_catalog_reads_every_page_without_ten_item_batches(self):
+        from shared.persistors.cosmos_client import DundaaCosmosClient
+        from shared.persistors.persistor import PersistorSetting
+        with patch("shared.persistors.cosmos_client.CosmosClient") as cosmos:
+            container = cosmos.return_value.get_database_client.return_value.get_container_client.return_value
+            container.read_all_items.return_value = iter({"id": str(index)} for index in range(250))
+            client = DundaaCosmosClient("https://cosmos.example", "synthetic-test-key")
+            setting = PersistorSetting(database_id="dundaa", container_id="site_events", partion_key="/site_name")
+            self.assertEqual(len(client.query(setting)), 250)
+            container.read_all_items.assert_called_once_with(max_item_count=100)
+
     def message(self, url):
         return EventBlobCreated(
             api="PutBlob", clientRequestId="client", requestId="request", eTag="etag",

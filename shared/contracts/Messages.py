@@ -10,6 +10,7 @@ class ScrapSite():
     delay: float
     scheduled_on: datetime.datetime = None
     id: str = None
+    source: str = None
 
 
     def __post_init__(self):

@@ -1,8 +1,11 @@
 from azure.cosmos import CosmosClient, PartitionKey
 from azure.identity import DefaultAzureCredential
 import json
+import logging
 
 from shared.persistors.persistor import PersistorSetting, Persistor
+
+logger = logging.getLogger(__name__)
 
 
 class DundaaCosmosClient(Persistor):
@@ -32,7 +35,7 @@ class DundaaCosmosClient(Persistor):
 
     def __fetch_all(self, db, container_name: str):
         container = db.get_container_client(container=container_name)
-        items = list(container.read_all_items(max_item_count=10))
+        items = list(container.read_all_items(max_item_count=100))
         return items
 
     def __fetch_one(self, id: str, container_name: str, partion_key: str, db):
@@ -61,7 +64,7 @@ class DundaaCosmosClient(Persistor):
                     item = dict(json.loads(item))
             except Exception as exc:
                 raise RuntimeError("Invalid data type parsed to persitor: %s" % exc)
-            print("writing %s %s" % (type(item),item))
+            logger.debug("Upserting event %s", item.get("id"))
             container.upsert_item(item)
         self.container = None
 
